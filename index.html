@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Send Mail - Email Sender by Celine Ayumi</title>
+    <link rel="stylesheet" href="style.css">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+    <script src="https://cdn.jsdelivr.net/particles.js/2.0.0/particles.min.js"></script>
+</head>
+<body>
+    <!-- Particle Background -->
+    <div id="particles-js"></div>
+    
+    <div class="container">
+        <!-- Header -->
+        <header>
+            <div class="logo">SEND MAIL</div>
+            <div class="tagline">Email Sender App by Celine Ayumi</div>
+        </header>
+        
+        <!-- Dashboard Grid -->
+        <div class="dashboard-grid">
+            <!-- Form Kirim Email -->
+            <div class="card">
+                <h2><i class="fas fa-paper-plane"></i> Kirim Email</h2>
+                <div class="stats-container">
+                    <div class="stat-card">
+                        <div class="stat-value" id="todayCount">0</div>
+                        <div class="stat-label">Hari Ini</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="remainingCount">15</div>
+                        <div class="stat-label">Sisa Kuota</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-value" id="cooldownStatus">0s</div>
+                        <div class="stat-label">Cooldown</div>
+                    </div>
+                </div>
+                
+                <form id="emailForm">
+                    <div class="form-group">
+                        <label for="toEmail"><i class="fas fa-envelope"></i> Email Tujuan</label>
+                        <input type="email" id="toEmail" required placeholder="contoh@email.com">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="subject"><i class="fas fa-heading"></i> Subject (Opsional)</label>
+                        <input type="text" id="subject" placeholder="Subject email">
+                    </div>
+                    
+                    <div class="form-group">
+                        <label for="message"><i class="fas fa-comment-alt"></i> Pesan</label>
+                        <textarea id="message" required placeholder="Tulis pesan email di sini..."></textarea>
+                    </div>
+                    
+                    <div class="btn-group">
+                        <button type="submit" id="sendBtn" class="btn btn-primary">
+                            <i class="fas fa-paper-plane"></i> Kirim Email
+                        </button>
+                        <button type="button" id="clearBtn" class="btn btn-secondary">
+                            <i class="fas fa-broom"></i> Bersihkan
+                        </button>
+                    </div>
+                </form>
+                
+                <div id="resultMessage" class="mt-20"></div>
+            </div>
+            
+            <!-- Riwayat Pengiriman -->
+            <div class="card">
+                <h2><i class="fas fa-history"></i> Riwayat Pengiriman</h2>
+                
+                <div class="btn-group">
+                    <button id="refreshLogsBtn" class="btn btn-secondary">
+                        <i class="fas fa-sync-alt"></i> Refresh
+                    </button>
+                    <button id="exportLogsBtn" class="btn btn-secondary">
+                        <i class="fas fa-download"></i> Export Log
+                    </button>
+                </div>
+                
+                <div class="logs-container" id="logsContainer">
+                    <!-- Log items akan dimuat di sini -->
+                    <div class="text-center" id="loadingLogs">
+                        <div class="spinner"></div>
+                        <p>Memuat riwayat...</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <!-- Footer -->
+        <footer>
+            <p>Send Mail &copy; 2023 - Dibuat oleh Celine Ayumi</p>
+            <p>Dual SMTP Gmail • Cooldown 1 menit • Maksimal 15 email/hari</p>
+        </footer>
+    </div>
+    
+    <script>
+        // Konfigurasi partikel background
+        document.addEventListener('DOMContentLoaded', function() {
+            particlesJS("particles-js", {
+                particles: {
+                    number: { value: 80, density: { enable: true, value_area: 800 } },
+                    color: { value: "#000000" },
+                    shape: { type: "circle" },
+                    opacity: { value: 0.5, random: true },
+                    size: { value: 3, random: true },
+                    line_linked: {
+                        enable: true,
+                        distance: 150,
+                        color: "#333333",
+                        opacity: 0.4,
+                        width: 1
+                    },
+                    move: {
+                        enable: true,
+                        speed: 2,
+                        direction: "none",
+                        random: true,
+                        straight: false,
+                        out_mode: "out",
+                        bounce: false
+                    }
+                },
+                interactivity: {
+                    detect_on: "canvas",
+                    events: {
+                        onhover: { enable: true, mode: "repulse" },
+                        onclick: { enable: true, mode: "push" }
+                    }
+                },
+                retina_detect: true
+            });
+            
+            // Inisialisasi aplikasi
+            initApp();
+        });
+        
+        // Aplikasi JavaScript
+        function initApp() {
+            // Element references
+            const emailForm = document.getElementById('emailForm');
+            const toEmail = document.getElementById('toEmail');
+            const subject = document.getElementById('subject');
+            const message = document.getElementById('message');
+            const sendBtn = document.getElementById('sendBtn');
+            const clearBtn = document.getElementById('clearBtn');
+            const resultMessage = document.getElementById('resultMessage');
+            const logsContainer = document.getElementById('logsContainer');
+            const loadingLogs = document.getElementById('loadingLogs');
+            const refreshLogsBtn = document.getElementById('refreshLogsBtn');
+            const exportLogsBtn = document.getElementById('exportLogsBtn');
+            const todayCount = document.getElementById('todayCount');
+            const remainingCount = document.getElementById('remainingCount');
+            const cooldownStatus = document.getElementById('cooldownStatus');
+            
+            // State
+            let cooldownEnd = null;
+            let cooldownInterval = null;
+            
+            // Event Listeners
+            emailForm.addEventListener('submit', handleSendEmail);
+            clearBtn.addEventListener('click', clearForm);
+            refreshLogsBtn.addEventListener('click', loadLogs);
+            exportLogsBtn.addEventListener('click', exportLogs);
+            
+            // Load data awal
+            updateStatus();
+            loadLogs();
+            
+            // Fungsi untuk mengirim email
+            async function handleSendEmail(e) {
+                e.preventDefault();
+                
+                const to = toEmail.value.trim();
+                const emailSubject = subject.value.trim();
+                const emailMessage = message.value.trim();
+                
+                // Validasi
+                if (!to || !emailMessage) {
+                    showResult('Email tujuan dan pesan wajib diisi', 'error');
+                    return;
+                }
+                
+                // Validasi format email
+                const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+                if (!emailRegex.test(to)) {
+                    showResult('Format email tujuan tidak valid', 'error');
+                    return;
+                }
+                
+                // Disable button dan tampilkan loading
+                const originalText = sendBtn.innerHTML;
+                sendBtn.innerHTML = '<div class="spinner"></div> Mengirim...';
+                sendBtn.disabled = true;
+                
+                try {
+                    const response = await fetch('/api/send-email', {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json'
+                        },
+                        body: JSON.stringify({
+                            to: to,
+                            subject: emailSubject,
+                            message: emailMessage
+                        })
+                    });
+                    
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        showResult('Sukses - Email berhasil dikirim!', 'success');
+                        emailForm.reset();
+                        startCooldownTimer();
+                    } else {
+                        showResult(`Gagal - ${data.message}`, 'error');
+                    }
+                    
+                    // Refresh data
+                    updateStatus();
+                    loadLogs();
+                    
+                } catch (error) {
+                    console.error('Error:', error);
+                    showResult('Gagal - Terjadi kesalahan jaringan', 'error');
+                } finally {
+                    // Kembalikan button ke state semula
+                    sendBtn.innerHTML = originalText;
+                    sendBtn.disabled = false;
+                }
+            }
+            
+            // Fungsi untuk membersihkan form
+            function clearForm() {
+                toEmail.value = '';
+                subject.value = '';
+                message.value = '';
+                resultMessage.innerHTML = '';
+            }
+            
+            // Fungsi untuk menampilkan hasil
+            function showResult(message, type) {
+                resultMessage.innerHTML = `
+                    <div class="alert alert-${type}">
+                        <i class="fas fa-${type === 'success' ? 'check-circle' : 'exclamation-circle'}"></i>
+                        <span>${message}</span>
+                    </div>
+                `;
+                
+                // Auto-hide setelah 5 detik untuk pesan sukses
+                if (type === 'success') {
+                    setTimeout(() => {
+                        resultMessage.innerHTML = '';
+                    }, 5000);
+                }
+            }
+            
+            // Fungsi untuk memuat riwayat
+            async function loadLogs() {
+                loadingLogs.classList.remove('hidden');
+                
+                try {
+                    const response = await fetch('/api/logs');
+                    const data = await response.json();
+                    
+                    if (data.success) {
+                        displayLogs(data.logs);
+                        todayCount.textContent = data.todayCount;
+                        remainingCount.textContent = Math.max(0, data.dailyLimit - data.todayCount);
+                    }
+                } catch (error) {
+                    console.error('Error loading logs:', error);
+                    logsContainer.innerHTML = '<div class="alert alert-error">Gagal memuat riwayat</div>';
+                } finally {
+                    loadingLogs.classList.add('hidden');
+                }
+            }
+            
+            // Fungsi untuk menampilkan riwayat
+            function displayLogs(logs) {
+                if (!logs || logs.length === 0) {
+                    logsContainer.innerHTML = '<div class="alert alert-info">Belum ada riwayat pengiriman</div>';
+                    return;
+                }
+                
+                let html = '';
+                
+                logs.forEach(log => {
+                    const date = new Date(log.timestamp);
+                    const timeString = date.toLocaleTimeString('id-ID', { 
+                        hour: '2-digit', 
+                        minute: '2-digit' 
+                    });
+                    const dateString = date.toLocaleDateString('id-ID');
+                    
+                    html += `
+                        <div class="log-item ${log.success ? 'success' : 'error'}">
+                            <div class="log-header">
+                                <div class="log-to">${log.to}</div>
+                                <div class="log-date">${dateString} ${timeString}</div>
+                            </div>
+                            <div class="log-subject">${log.subject}</div>
+                            <div class="log-message">${log.message}</div>
+                            <div class="log-smtp">${log.smtpUsed} • ${log.success ? 'Sukses' : 'Gagal'}</div>
+                        </div>
+                    `;
+                });
+                
+                logsContainer.innerHTML = html;
+            }
+            
+            // Fungsi untuk update status
+            async function updateStatus() {
+                try {
+                    const response = await fetch('/api/status');
+                    const data = await response.json();
+                    
+                    todayCount.textContent = data.todayCount;
+                    remainingCount.textContent = data.remaining;
+                    
+                    // Cek cooldown dari last sent
+                    if (data.lastSent) {
+                        const lastSent = new Date(data.lastSent);
+                        const now = new Date();
+                        const diffSeconds = Math.floor((now - lastSent) / 1000);
+                        
+                        if (diffSeconds < data.cooldown) {
+                            startCooldownTimerFromDiff(data.cooldown - diffSeconds);
+                        }
+                    }
+                } catch (error) {
+                    console.error('Error updating status:', error);
+                }
+            }
+            
+            // Fungsi untuk export log
+            async function exportLogs() {
+                try {
+                    const response = await fetch('/api/export-logs');
+                    const blob = await response.blob();
+                    
+                    // Buat link download
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `sendmail-logs-${new Date().toISOString().split('T')[0]}.json`;
+                    document.body.appendChild(a);
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                    document.body.removeChild(a);
+                } catch (error) {
+                    console.error('Error exporting logs:', error);
+                    alert('Gagal mengekspor log');
+                }
+            }
+            
+            // Fungsi untuk cooldown timer
+            function startCooldownTimer() {
+                cooldownEnd = Date.now() + 60000; // 1 menit
+                
+                if (cooldownInterval) {
+                    clearInterval(cooldownInterval);
+                }
+                
+                cooldownInterval = setInterval(() => {
+                    updateCooldownDisplay();
+                }, 1000);
+                
+                updateCooldownDisplay();
+            }
+            
+            function startCooldownTimerFromDiff(seconds) {
+                cooldownEnd = Date.now() + (seconds * 1000);
+                
+                if (cooldownInterval) {
+                    clearInterval(cooldownInterval);
+                }
+                
+                cooldownInterval = setInterval(() => {
+                    updateCooldownDisplay();
+                }, 1000);
+                
+                updateCooldownDisplay();
+            }
+            
+            function updateCooldownDisplay() {
+                if (!cooldownEnd) {
+                    cooldownStatus.textContent = '0s';
+                    return;
+                }
+                
+                const now = Date.now();
+                const remaining = Math.max(0, cooldownEnd - now);
+                
+                if (remaining <= 0) {
+                    clearCooldownTimer();
+                    cooldownStatus.textContent = '0s';
+                } else {
+                    const seconds = Math.ceil(remaining / 1000);
+                    cooldownStatus.textContent = `${seconds}s`;
+                }
+            }
+            
+            function clearCooldownTimer() {
+                if (cooldownInterval) {
+                    clearInterval(cooldownInterval);
+                    cooldownInterval = null;
+                }
+                cooldownEnd = null;
+                cooldownStatus.textContent = '0s';
+            }
+        }
+    </script>
+</body>
+</html>
