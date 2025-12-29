@@ -4,29 +4,77 @@ const fs = require('fs');
 const path = require('path');
 const cors = require('cors');
 const bodyParser = require('body-parser');
-const settings = require('./setting.js');
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Middleware
+// ========== MIDDLEWARE ==========
 app.use(cors());
 app.use(bodyParser.json());
+app.use(bodyParser.urlencoded({ extended: true }));
+
+// ========== STATIC FILES ==========
+// Serve static files dari root directory
 app.use(express.static(__dirname));
 
-// Simpan log di memory dan file
+// ========== ROUTE UNTUK HTML & CSS ==========
+// Route untuk halaman utama
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
+
+// Route untuk CSS
+app.get('/style.css', (req, res) => {
+    res.setHeader('Content-Type', 'text/css');
+    res.sendFile(path.join(__dirname, 'style.css'));
+});
+
+// Route untuk favicon (optional)
+app.get('/favicon.ico', (req, res) => {
+    res.status(204).end();
+});
+
+// ========== KONFIGURASI SMTP ==========
+const settings = {
+    // SMTP 1
+    SMTP1: {
+        user: "sennohara373@gmail.com",
+        pass: "zkzq aows aygd rcxs",
+        host: "smtp.gmail.com",
+        port: 587,
+        secure: false
+    },
+    
+    // SMTP 2
+    SMTP2: {
+        user: "iwishyouknow9999@gmail.com",
+        pass: "nqtl tvnj rbht oddy",
+        host: "smtp.gmail.com",
+        port: 587,
+        secure: false
+    },
+    
+    // Batas pengiriman
+    DAILY_LIMIT: 15,
+    COOLDOWN_SECONDS: 60, // 1 menit
+    
+    // File log (gunakan /tmp untuk Vercel)
+    LOG_FILE: "/tmp/logs.json"
+};
+
+// ========== LOG SYSTEM ==========
 let logs = [];
-const LOG_FILE = settings.LOG_FILE;
 
 // Fungsi untuk memuat log
 function loadLogs() {
     try {
-        if (fs.existsSync(LOG_FILE)) {
-            const data = fs.readFileSync(LOG_FILE, 'utf8');
+        if (fs.existsSync(settings.LOG_FILE)) {
+            const data = fs.readFileSync(settings.LOG_FILE, 'utf8');
             logs = JSON.parse(data);
+            console.log(`Logs loaded: ${logs.length} entries`);
         } else {
             logs = [];
-            saveLogs();
+            console.log("No log file found, starting fresh");
         }
     } catch (error) {
         console.error("Error membaca file log:", error);
@@ -37,7 +85,8 @@ function loadLogs() {
 // Fungsi untuk menyimpan log
 function saveLogs() {
     try {
-        fs.writeFileSync(LOG_FILE, JSON.stringify(logs, null, 2));
+        fs.writeFileSync(settings.LOG_FILE, JSON.stringify(logs, null, 2));
+        console.log(`Logs saved: ${logs.length} entries`);
     } catch (error) {
         console.error("Error menyimpan log:", error);
     }
@@ -46,23 +95,37 @@ function saveLogs() {
 // Muat log saat startup
 loadLogs();
 
-// Fungsi cek batas harian
+// ========== HELPER FUNCTIONS ==========
+// Cek batas harian
 function checkDailyLimit() {
     const today = new Date().toISOString().split('T')[0];
     const todayLogs = logs.filter(log => log.date === today);
-    return todayLogs.length >= settings.DAILY_LIMIT;
+    const isLimit = todayLogs.length >= settings.DAILY_LIMIT;
+    
+    if (isLimit) {
+        console.log(`Daily limit reached: ${todayLogs.length}/${settings.DAILY_LIMIT}`);
+    }
+    
+    return isLimit;
 }
 
-// Fungsi cek cooldown
+// Cek cooldown
 function checkCooldown() {
-    if (logs.length === 0) return false;
+    if (logs.length === 0) {
+        return false;
+    }
     
     const lastLog = logs[logs.length - 1];
     const lastTime = new Date(lastLog.timestamp);
     const now = new Date();
     const diffSeconds = (now - lastTime) / 1000;
+    const isCooldown = diffSeconds < settings.COOLDOWN_SECONDS;
     
-    return diffSeconds < settings.COOLDOWN_SECONDS;
+    if (isCooldown) {
+        console.log(`Cooldown active: ${Math.ceil(diffSeconds)}s/${settings.COOLDOWN_SECONDS}s`);
+    }
+    
+    return isCooldown;
 }
 
 // Buat transporter SMTP
@@ -81,17 +144,9 @@ function createTransporter(smtpConfig) {
     });
 }
 
-// Endpoint utama untuk halaman
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'index.html'));
-});
+// ========== API ENDPOINTS ==========
 
-// Endpoint untuk CSS
-app.get('/style.css', (req, res) => {
-    res.sendFile(path.join(__dirname, 'style.css'));
-});
-
-// Endpoint untuk status aplikasi
+// 1. Endpoint untuk status aplikasi
 app.get('/api/status', (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const todayLogs = logs.filter(log => log.date === today);
@@ -101,17 +156,21 @@ app.get('/api/status', (req, res) => {
         success: true,
         app: "Send Mail",
         author: "Celine Ayumi",
+        version: "1.0.0",
         dailyLimit: settings.DAILY_LIMIT,
         todayCount: todayLogs.length,
         remaining: Math.max(0, settings.DAILY_LIMIT - todayLogs.length),
         cooldown: settings.COOLDOWN_SECONDS,
         lastSent: lastLog ? lastLog.timestamp : null,
-        totalLogs: logs.length
+        totalLogs: logs.length,
+        timestamp: new Date().toISOString()
     });
 });
 
-// Endpoint untuk mengirim email
+// 2. Endpoint untuk mengirim email
 app.post('/api/send-email', async (req, res) => {
+    console.log("Received email send request:", req.body);
+    
     try {
         const { to, subject, message } = req.body;
         
@@ -136,7 +195,7 @@ app.post('/api/send-email', async (req, res) => {
         if (checkDailyLimit()) {
             return res.status(429).json({ 
                 success: false, 
-                message: "Batas harian 15 email telah tercapai. Coba lagi besok." 
+                message: `Batas harian ${settings.DAILY_LIMIT} email telah tercapai. Coba lagi besok.` 
             });
         }
         
@@ -153,11 +212,13 @@ app.post('/api/send-email', async (req, res) => {
         let success = false;
         let errorMessage = "";
         
+        console.log(`Attempting to send email to: ${to}`);
+        
         // Coba SMTP 1 terlebih dahulu
         let transporter = createTransporter(settings.SMTP1);
         
         try {
-            // Kirim email dengan SMTP 1
+            console.log("Trying SMTP 1...");
             await transporter.sendMail({
                 from: `"Send Mail" <${settings.SMTP1.user}>`,
                 to: to,
@@ -165,8 +226,9 @@ app.post('/api/send-email', async (req, res) => {
                 text: message
             });
             success = true;
+            console.log("Email sent successfully via SMTP 1");
         } catch (error) {
-            console.log("SMTP 1 gagal:", error.message);
+            console.log("SMTP 1 failed:", error.message);
             errorMessage = error.message;
             
             // Jika SMTP 1 gagal, coba SMTP 2
@@ -174,6 +236,7 @@ app.post('/api/send-email', async (req, res) => {
                 transporter = createTransporter(settings.SMTP2);
                 smtpUsed = "SMTP 2";
                 
+                console.log("Trying SMTP 2...");
                 await transporter.sendMail({
                     from: `"Send Mail" <${settings.SMTP2.user}>`,
                     to: to,
@@ -182,8 +245,9 @@ app.post('/api/send-email', async (req, res) => {
                 });
                 success = true;
                 errorMessage = "";
+                console.log("Email sent successfully via SMTP 2");
             } catch (error2) {
-                console.log("SMTP 2 juga gagal:", error2.message);
+                console.log("SMTP 2 also failed:", error2.message);
                 success = false;
                 errorMessage = error2.message;
             }
@@ -200,7 +264,8 @@ app.post('/api/send-email', async (req, res) => {
             timestamp: new Date().toISOString(),
             success: success,
             smtpUsed: smtpUsed,
-            error: errorMessage
+            error: errorMessage,
+            ip: req.ip
         };
         
         logs.push(logEntry);
@@ -221,22 +286,25 @@ app.post('/api/send-email', async (req, res) => {
         }
         
     } catch (error) {
-        console.error("Error mengirim email:", error);
+        console.error("Error in send-email endpoint:", error);
         res.status(500).json({ 
             success: false, 
-            message: "Terjadi kesalahan server" 
+            message: "Terjadi kesalahan server: " + error.message
         });
     }
 });
 
-// Endpoint untuk mendapatkan riwayat
+// 3. Endpoint untuk mendapatkan riwayat
 app.get('/api/logs', (req, res) => {
     const today = new Date().toISOString().split('T')[0];
     const todayLogs = logs.filter(log => log.date === today);
     
+    // Limit jumlah log yang dikembalikan untuk performa
+    const limitedLogs = logs.slice(-50).reverse(); // 50 log terbaru
+    
     res.json({ 
         success: true, 
-        logs: logs.slice().reverse(),
+        logs: limitedLogs,
         dailyLimit: settings.DAILY_LIMIT,
         cooldown: settings.COOLDOWN_SECONDS,
         todayCount: todayLogs.length,
@@ -244,7 +312,7 @@ app.get('/api/logs', (req, res) => {
     });
 });
 
-// Endpoint untuk export log
+// 4. Endpoint untuk export log
 app.get('/api/export-logs', (req, res) => {
     try {
         const logData = JSON.stringify(logs, null, 2);
@@ -259,29 +327,59 @@ app.get('/api/export-logs', (req, res) => {
     }
 });
 
-// Endpoint untuk testing
+// 5. Endpoint untuk reset log (development only)
+app.delete('/api/reset-logs', (req, res) => {
+    logs = [];
+    saveLogs();
+    res.json({ success: true, message: "Logs reset successfully" });
+});
+
+// 6. Endpoint untuk testing API
 app.get('/api/test', (req, res) => {
     res.json({ 
         status: 'OK',
         app: 'Send Mail',
         author: 'Celine Ayumi',
         version: '1.0.0',
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        environment: process.env.NODE_ENV || 'development'
     });
 });
 
-// Tangani 404
-app.use((req, res) => {
-    res.status(404).json({ error: 'Endpoint tidak ditemukan' });
+// ========== ERROR HANDLING ==========
+// Handle 404 - API not found
+app.use('/api/*', (req, res) => {
+    res.status(404).json({ 
+        success: false, 
+        message: 'API endpoint tidak ditemukan',
+        path: req.originalUrl 
+    });
 });
 
-// Export untuk Vercel
-module.exports = app;
+// Handle 404 - Page not found (fallback to index.html for SPA)
+app.use((req, res) => {
+    // Jika request untuk API, kembalikan 404 JSON
+    if (req.path.startsWith('/api/')) {
+        return res.status(404).json({ 
+            success: false, 
+            message: 'Endpoint tidak ditemukan' 
+        });
+    }
+    
+    // Untuk halaman lain, arahkan ke index.html (untuk SPA routing)
+    res.sendFile(path.join(__dirname, 'index.html'));
+});
 
-// Untuk development lokal
+// ========== SERVER STARTUP ==========
+// Hanya jalankan server jika bukan di Vercel
 if (require.main === module) {
     app.listen(PORT, () => {
-        console.log(`Server berjalan di http://localhost:${PORT}`);
-        console.log(`Aplikasi Send Mail siap digunakan!`);
+        console.log(`🚀 Server Send Mail berjalan di http://localhost:${PORT}`);
+        console.log(`📧 Aplikasi siap digunakan!`);
+        console.log(`📊 Total logs: ${logs.length}`);
+        console.log(`🔧 SMTP Config: Dual Gmail dengan auto-fallback`);
     });
 }
+
+// ========== EXPORT FOR VERCEL ==========
+module.exports = app;
